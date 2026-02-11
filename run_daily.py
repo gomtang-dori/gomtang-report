@@ -1,174 +1,355 @@
-# run_daily.py
-# 목적: GitHub Actions에서 곰탕지수 리포트를 "직접" 생성해서 docs/에 저장
-# 산출물:
-# - docs/index.html (최신)
-# - docs/곰탕지수_1Y리스케일_YYYY-MM-DD_embedded.html (날짜별)
-# - docs/곰탕지수_1Y리스케일_YYYY-MM-DD.html (가벼운 버전: 이미지 외부참조)
-#
-# 입력은 현재 Genspark에서 만든 CSV/JSON을 다운로드해서 사용(토큰 URL 만료 가능)
-# 안정화: 다음 단계에서 이 파일들을 레포에 vendor/로 커밋 권장
+# -*- coding: utf-8 -*-
+"""
+Gomtang Index (Korea Fear & Greed) - Daily HTML report generator for GitHub Actions + Pages
 
-import base64
-import io
+Inputs (repo local):
+- data/korea_fear_greed_v2_ks200_last1y_rescaled_with_forward.csv
+- data/fg_forward_summary_last1y_rescaled_pretty.csv
+- data/summary_last1y_rescaled.json (optional)
+
+Outputs (docs/):
+- docs/곰탕지수_1Y리스케일_YYYY-MM-DD_embedded.html
+- docs/곰탕지수_1Y리스케일_latest_embedded.html
+- docs/index.html  (copy of latest)
+"""
+
+from __future__ import annotations
+
 import json
-import os
 from pathlib import Path
-import pandas as pd
+from datetime import datetime
+
 import numpy as np
+import pandas as pd
+
+import matplotlib
+matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
+import seaborn as sns
 
-DATA_LAST1Y_WITH_FWD_URL = "https://www.genspark.ai/api/files/s/0vTYPWpI?token=Z0FBQUFBQnBqSnZGQTNuUVRPcTdyVkE1TkJnQlNON0xhMzhhb2tJVUNrUkNHbEpfRzhDVW1tNmVKbXhNRW1rT1o5WWw4UWlxTU83MkdDdlNtOG9aNGtpRVU1SUN3aU9BYkhlUVVaVWZYRDRVdWpRVG1MMjNUUEtKNnZXWk82SFJZMHFsUkxua0pTTmowN1E2cGM1d0QxREc4R2NUY1NQQ0lNUUVCN2Q1ZWlVTzIzdmg0OEc5QXM2S2lwUGRzWDFtWmlDa3BzWUpHUlRRZ3R5aFpHeHRiM0ZwUXAtVEgyQWQwR2VZa2pFcDBmamN6YkpmNXUwSURlNEJEZGdWTkxyc1pBYUkzamNrVGdjWnM2MWY5TFp4SjRkdXFVb0NTcFZYZHc9PQ"
-FWD_BUCKET_SUMMARY_URL = "https://www.genspark.ai/api/files/s/zF8mcR6Z?token=Z0FBQUFBQnBqSnZGX3lWZi14eEVsd2FIMnhJajEtMEI4aWQtS09OV0dfODVCSGFnaWtqMHM1OVRXTG5YaWI5RXlNV1pVQTFMakFJSkt4VnRoRGdSMkRNWTBCbUUwXzZESTVBLWlZMXd5a3lyMjBkMzFLOE1RUFJYTk5lMVhYOW45eXA1UmhBbjBZLTJrdVdZN0plTW80V2JzeVpGaVZ3U3dGX25MMXNnYjJjcThZbWVpVWRXNFB4NVZvVFhfZVJBelFRazNUY2RRTFJuSDNaY2F0bEVPS0VraXlUbHh6WWhTbXFNdXE4MENTN3pXUzZNaV8tUDBBUHJDQml1XzJMYzVYWGtRMXBTYl81eWpnWC1qVHBpdDduWUhJU2tHZUU2NGc9PQ"
-SUMMARY_JSON_URL = "https://www.genspark.ai/api/files/s/iVE4ooxf?token=Z0FBQUFBQnBqSnZGVjZUUDliNkhQUURsa09zaUhpa0xfRmc3RFRiLTJVY3JUd19mY0dRVWx6N3lqdy1GdGtyNFc0dnFKNlRLZUlETUtMS1ExR3JpX1l5cDhYbUwzMVN6TXA0Rk56VFV4Q3JxLVFXRkJsUGsyVXByc25CRFJzc2xDZHZmNEJCNElkOVNIUGQ2bzB3UUg2ZUdFN0tfczBmQVpmdlVCSHVGZFhyN1BsVG1NV3E2d1lDcnhLMXRMbTQ2RGVfb1Utd3NCT1MtS3dSX20tY0hyWGgzRUFDMjNKQmhhTEIxSXAyYjEzNHZvZDdmZXhHSUI4YkgwcVN1dGxlT3hjVkVWVEdtR085Smd5T0ljUXhTZU9NQ0gyY1psWnlRQVE9PQ"
 
-OUT_DOCS = Path("docs")
-OUT_DOCS.mkdir(parents=True, exist_ok=True)
+REPO_ROOT = Path(__file__).resolve().parent
+DATA_DIR = REPO_ROOT / "data"
+DOCS_DIR = REPO_ROOT / "docs"
+ASSETS_DIR = DOCS_DIR / "assets"
 
-def read_csv(url: str) -> pd.DataFrame:
-    return pd.read_csv(url)
+FG_CSV = DATA_DIR / "korea_fear_greed_v2_ks200_last1y_rescaled_with_forward.csv"
+FWD_SUMMARY_CSV = DATA_DIR / "fg_forward_summary_last1y_rescaled_pretty.csv"
+SUMMARY_JSON = DATA_DIR / "summary_last1y_rescaled.json"
 
-def read_json(url: str) -> dict:
-    return json.loads(pd.read_json(url, typ="series").to_json())
 
-def fig_to_base64_png(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+def _ensure_dirs():
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _read_fg() -> pd.DataFrame:
+    if not FG_CSV.exists():
+        raise FileNotFoundError(f"Missing input: {FG_CSV}")
+
+    df = pd.read_csv(FG_CSV)
+    # Column names observed in raw header include '날짜' [Source: raw file]
+    if "날짜" in df.columns:
+        df["date"] = pd.to_datetime(df["날짜"])
+    elif "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+    elif "Date" in df.columns:
+        df["date"] = pd.to_datetime(df["Date"])
+    else:
+        raise ValueError(f"Cannot find date column. Columns={list(df.columns)[:30]}...")
+
+    df = df.sort_values("date").reset_index(drop=True)
+    return df
+
+
+def _safe_col(df: pd.DataFrame, col: str) -> bool:
+    return col in df.columns and df[col].notna().any()
+
+
+def _fig_line_fg(df: pd.DataFrame, out_png: Path) -> None:
+    # prefer 1y rescaled series if exists
+    y_col = None
+    for c in ["fear_greed_1y_rescaled", "fear_greed"]:
+        if _safe_col(df, c):
+            y_col = c
+            break
+    if y_col is None:
+        raise ValueError("No FG series found (fear_greed_1y_rescaled / fear_greed).")
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(df["date"], df[y_col], linewidth=2, color="#1f77b4")
+    ax.set_title(f"곰탕지수(FG) 추이 — {y_col}", fontsize=14)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("FG")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=160)
     plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-def ensure_columns(df: pd.DataFrame, candidates: list[str]) -> str:
-    for c in candidates:
-        if c in df.columns:
-            return c
-    raise ValueError(f"Missing columns. Need one of {candidates}. Have: {list(df.columns)[:30]} ...")
 
-def make_line_chart(df: pd.DataFrame, date_col: str, score_col: str):
-    x = pd.to_datetime(df[date_col])
-    y = df[score_col].astype(float)
-    fig, ax = plt.subplots(figsize=(10, 3.2))
-    ax.plot(x, y, lw=1.6)
-    ax.set_title("곰탕지수(1Y 리스케일) 라인차트")
-    ax.grid(True, alpha=0.3)
-    return fig
+def _fig_components(df: pd.DataFrame, out_png: Path) -> None:
+    comps = ["momentum", "strength", "breadth", "putcall", "volatility", "safe_haven", "junk_bond", "margin_loan_ratio"]
+    have = [c for c in comps if _safe_col(df, c)]
+    if len(have) == 0:
+        return
 
-def make_component_chart(df: pd.DataFrame, date_col: str, cols: list[str]):
-    x = pd.to_datetime(df[date_col])
-    fig, ax = plt.subplots(figsize=(10, 3.2))
-    for c in cols:
-        if c in df.columns:
-            ax.plot(x, df[c].astype(float), lw=1.2, label=c)
-    ax.set_title("컴포넌트(가능한 컬럼만 표시)")
-    ax.grid(True, alpha=0.3)
-    ax.legend(ncol=3, fontsize=8, loc="upper left")
-    return fig
+    last = df.tail(180).copy()  # 최근 약 6~9개월 정도만 보기 좋게
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for c in have:
+        ax.plot(last["date"], last[c], linewidth=1.8, label=c)
+    ax.set_title("컴포넌트 추이(최근 구간)", fontsize=14)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Score")
+    ax.grid(True, alpha=0.25)
+    ax.legend(ncol=2, fontsize=9, frameon=False)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
 
-def bucket_forward_block(fwd: pd.DataFrame, bucket: str) -> str:
-    out = []
-    out.append(f"<h3>버킷별 Forward 승률(B안 참고)</h3>")
-    out.append(f"<p><b>현재 버킷</b>: {bucket}</p>")
-    for h in [20, 60]:
-        sub = fwd[(fwd["bucket"] == bucket) & (fwd["horizon_trading_days"] == h)]
-        if len(sub) == 0:
-            out.append(f"<p>{h}D: 데이터 없음</p>")
-            continue
-        r = sub.iloc[0]
-        out.append(
-            f"<p><b>{h}거래일</b> 승률(>0): {r['win_rate_pct']:.1f}% (n={int(r['count'])}), 평균 {r['mean_pct']:.2f}%</p>"
+
+def _fig_heatmap_forward(df: pd.DataFrame, out_png: Path) -> None:
+    # Make heatmap of fg_bucket_1y vs (mean fwd_ret_20d_1y, winrate)
+    req = ["fg_bucket_1y", "fwd_ret_20d_1y", "fwd_ret_60d_1y"]
+    if not all(_safe_col(df, c) for c in req):
+        return
+
+    d = df.dropna(subset=req).copy()
+
+    def _bucket_order(x: str) -> int:
+        # Expect strings like 'Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed'
+        order = {
+            "Extreme Fear": 0,
+            "Fear": 1,
+            "Neutral": 2,
+            "Greed": 3,
+            "Extreme Greed": 4,
+        }
+        return order.get(str(x), 99)
+
+    buckets = sorted(d["fg_bucket_1y"].astype(str).unique(), key=_bucket_order)
+
+    stats = []
+    for b in buckets:
+        sub = d[d["fg_bucket_1y"].astype(str) == str(b)]
+        mean20 = float(sub["fwd_ret_20d_1y"].mean())
+        win20 = float((sub["fwd_ret_20d_1y"] > 0).mean())
+        mean60 = float(sub["fwd_ret_60d_1y"].mean())
+        win60 = float((sub["fwd_ret_60d_1y"] > 0).mean())
+        stats.append([b, mean20, win20, mean60, win60])
+
+    s = pd.DataFrame(stats, columns=["bucket", "mean20", "win20", "mean60", "win60"]).set_index("bucket")
+
+    # 2x2 heatmap
+    mat = np.array([
+        [s.loc[b, "mean20"] for b in buckets],
+        [s.loc[b, "win20"] for b in buckets],
+        [s.loc[b, "mean60"] for b in buckets],
+        [s.loc[b, "win60"] for b in buckets],
+    ], dtype=float)
+
+    fig, ax = plt.subplots(figsize=(12, 4.6))
+    sns.heatmap(
+        mat,
+        annot=True,
+        fmt=".3f",
+        cmap="RdYlGn",
+        center=0.0,
+        cbar=True,
+        ax=ax,
+        xticklabels=buckets,
+        yticklabels=["mean_20d", "winrate_20d", "mean_60d", "winrate_60d"],
+    )
+    ax.set_title("버킷별 Forward 성과(평균/승률)", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=170)
+    plt.close(fig)
+
+
+def _read_forward_summary_table() -> str:
+    if not FWD_SUMMARY_CSV.exists():
+        return "<p><b>forward 요약표 파일 없음</b></p>"
+
+    df = pd.read_csv(FWD_SUMMARY_CSV)
+    # Render as HTML table
+    return df.to_html(index=False, escape=False)
+
+
+def _read_summary_json() -> dict:
+    if not SUMMARY_JSON.exists():
+        return {}
+    try:
+        return json.loads(SUMMARY_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _build_html(title: str, asof: str, img_paths: dict, summary_json: dict, fwd_table_html: str) -> str:
+    # Basic, fully self-contained HTML (embedded images as relative paths under docs/)
+    def _img_tag(rel: str, alt: str) -> str:
+        if not rel:
+            return ""
+        return f'<div class="card"><h3>{alt}</h3><img src="{rel}" alt="{alt}" /></div>'
+
+    summary_block = ""
+    if summary_json:
+        # Pretty key-value list
+        items = "".join(
+            f"<tr><td>{k}</td><td>{v}</td></tr>"
+            for k, v in summary_json.items()
+            if isinstance(k, str)
         )
-    return "\n".join(out)
+        summary_block = f"""
+        <div class="card">
+          <h3>요약</h3>
+          <table class="kv">{items}</table>
+        </div>
+        """
 
-def main():
-    # 1) 입력 데이터 다운로드
-    df = read_csv(DATA_LAST1Y_WITH_FWD_URL)
-    fwd = read_csv(FWD_BUCKET_SUMMARY_URL)
-
-    # 2) 컬럼 추정(데이터 구조가 바뀌어도 최대한 견고하게)
-    date_col = ensure_columns(df, ["date", "Date", "base_date", "dt"])
-    score_col = ensure_columns(df, ["fg_rescaled", "gomtang_rescaled", "fear_greed_rescaled", "score_rescaled", "fg_score_rescaled", "score"])
-    bucket_col = ensure_columns(df, ["bucket", "regime", "fg_bucket"])
-
-    # 3) 최신 날짜/버킷
-    df_sorted = df.sort_values(date_col)
-    latest = df_sorted.iloc[-1]
-    date_str = str(latest[date_col])[:10]
-    bucket = str(latest[bucket_col])
-
-    # 4) 차트 생성(embedded는 base64로 삽입)
-    fig1 = make_line_chart(df_sorted, date_col, score_col)
-    b64_line = fig_to_base64_png(fig1)
-
-    # 컴포넌트 후보 컬럼 (있으면 표시)
-    comp_candidates = ["mom_20d", "mom_60d", "vol_20d", "vol_60d", "breadth", "putcall", "skew"]
-    fig2 = make_component_chart(df_sorted, date_col, comp_candidates)
-    b64_comp = fig_to_base64_png(fig2)
-
-    # 5) 통계(간단 버전): 현재 점수/버킷 + forward
-    fwd_block = bucket_forward_block(fwd, bucket)
-
-    # 6) HTML 생성 (embedded)
-    html = f"""
-<!doctype html>
+    html = f"""<!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>곰탕지수 최신 리포트</title>
-<style>
-body {{ font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans KR',Arial,sans-serif; margin: 16px; }}
-.nav {{ position: sticky; top:0; background:#111; color:#fff; padding:10px 12px; border-radius:10px; }}
-.nav a {{ color:#fff; text-decoration:none; margin-right:12px; }}
-.card {{ border:1px solid #e5e5e5; border-radius:12px; padding:12px; margin:12px 0; }}
-.small {{ color:#666; font-size: 13px; }}
-img {{ max-width: 100%; border-radius: 10px; }}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <style>
+    :root {{
+      --bg: #0b1220;
+      --card: #111b2e;
+      --text: #e8eefc;
+      --muted: #a9b6d3;
+      --line: rgba(255,255,255,0.12);
+      --accent: #6ea8fe;
+    }}
+    body {{
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", Arial, sans-serif;
+    }}
+    .wrap {{ max-width: 1100px; margin: 0 auto; padding: 18px; }}
+    .title {{
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(110,168,254,0.20), rgba(17,27,46,0.2));
+      border-radius: 14px;
+      margin-bottom: 14px;
+    }}
+    h1 {{ margin: 0; font-size: 22px; }}
+    .meta {{ margin-top: 6px; color: var(--muted); font-size: 13px; }}
+    .grid {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }}
+    @media (min-width: 900px) {{
+      .grid {{ grid-template-columns: 1fr 1fr; }}
+    }}
+    .card {{
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 14px;
+      padding: 12px;
+      overflow: hidden;
+    }}
+    .card h3 {{ margin: 0 0 10px 0; font-size: 16px; color: #dbe6ff; }}
+    img {{ width: 100%; height: auto; border-radius: 10px; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{
+      border-bottom: 1px solid var(--line);
+      padding: 8px 10px;
+      font-size: 13px;
+    }}
+    th {{ color: #dbe6ff; text-align: left; background: rgba(255,255,255,0.03); }}
+    .kv td:first-child {{ width: 42%; color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    .footer {{ color: var(--muted); font-size: 12px; margin-top: 14px; }}
+  </style>
 </head>
 <body>
-<div class="nav">
-  <b>곰탕지수 리포트</b>
-  <span class="small" style="color:#bbb; margin-left:8px;">기준일 {date_str}</span>
-</div>
+  <div class="wrap">
+    <div class="title">
+      <h1>{title}</h1>
+      <div class="meta">기준일: <b>{asof}</b> · 생성시각(UTC): {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}</div>
+    </div>
 
-<div class="card">
-  <h2>요약</h2>
-  <p><b>현재 버킷</b>: {bucket}</p>
-  <p><b>현재 점수</b>: {float(latest[score_col]):.2f}</p>
-</div>
+    <div class="grid">
+      {summary_block}
+      <div class="card">
+        <h3>Forward 요약표</h3>
+        {fwd_table_html}
+      </div>
+    </div>
 
-<div class="card">
-  <h2>라인차트</h2>
-  <img src="data:image/png;base64,{b64_line}" />
-</div>
+    <div class="grid" style="margin-top:14px;">
+      {_img_tag(img_paths.get("fg_line",""), "라인차트")}
+      {_img_tag(img_paths.get("components",""), "컴포넌트 라인차트")}
+    </div>
 
-<div class="card">
-  <h2>컴포넌트 차트</h2>
-  <img src="data:image/png;base64,{b64_comp}" />
-</div>
+    <div class="grid" style="margin-top:14px;">
+      {_img_tag(img_paths.get("heatmap",""), "히트맵(Forward 평균/승률)")}
+      <div class="card">
+        <h3>설명</h3>
+        <p style="color:var(--muted); line-height:1.6; margin:0;">
+          이 페이지는 GitHub Actions에서 레포 내부 데이터(<code>data/</code>)를 읽어 매일 자동 생성됩니다.
+          GitHub Pages 루트 주소는 항상 <code>docs/index.html</code>(최신 리포트 복사본)을 보여줍니다.
+        </p>
+      </div>
+    </div>
 
-<div class="card" id="stats">
-  {fwd_block}
-</div>
-
-<div class="card">
-  <h2>파일</h2>
-  <p class="small">이 페이지는 GitHub Actions가 자동 생성합니다.</p>
-</div>
+    <div class="footer">
+      <div>Repo: <a href="https://github.com/gomtang-dori/gomtang-report" target="_blank">gomtang-dori/gomtang-report</a></div>
+    </div>
+  </div>
 </body>
-</html>
-""".strip()
+</html>"""
+    return html
 
-    # 7) 저장 (docs/)
-    dated_embedded = OUT_DOCS / f"곰탕지수_1Y리스케일_{date_str}_embedded.html"
-    latest_embedded = OUT_DOCS / "곰탕지수_1Y리스케일_latest_embedded.html"
-    index_html = OUT_DOCS / "index.html"
 
-    dated_embedded.write_text(html, encoding="utf-8")
-    latest_embedded.write_text(html, encoding="utf-8")
-    index_html.write_text(html, encoding="utf-8")
+def main():
+    _ensure_dirs()
 
-    # 가벼운 버전(plain)은 우선 embedded와 동일 파일로 저장(추후 이미지 외부 분리 가능)
-    (OUT_DOCS / f"곰탕지수_1Y리스케일_{date_str}.html").write_text(html, encoding="utf-8")
+    df = _read_fg()
 
-    print("OK:", dated_embedded, latest_embedded, index_html)
+    # asof date: last row date
+    asof_dt = df["date"].iloc[-1]
+    asof = asof_dt.strftime("%Y-%m-%d")
+
+    # generate images into docs/assets
+    fg_line_png = ASSETS_DIR / "fg_line.png"
+    comps_png = ASSETS_DIR / "components_line.png"
+    heat_png = ASSETS_DIR / "forward_heatmap.png"
+
+    _fig_line_fg(df, fg_line_png)
+    _fig_components(df, comps_png)
+    _fig_heatmap_forward(df, heat_png)
+
+    img_paths = {
+        "fg_line": f"assets/{fg_line_png.name}" if fg_line_png.exists() else "",
+        "components": f"assets/{comps_png.name}" if comps_png.exists() else "",
+        "heatmap": f"assets/{heat_png.name}" if heat_png.exists() else "",
+    }
+
+    fwd_table_html = _read_forward_summary_table()
+    summary_json = _read_summary_json()
+
+    title = "곰탕지수 (1Y 리스케일) — Daily Report"
+    html = _build_html(title=title, asof=asof, img_paths=img_paths, summary_json=summary_json, fwd_table_html=fwd_table_html)
+
+    dated_name = f"곰탕지수_1Y리스케일_{asof}_embedded.html"
+    latest_name = "곰탕지수_1Y리스케일_latest_embedded.html"
+
+    dated_path = DOCS_DIR / dated_name
+    latest_path = DOCS_DIR / latest_name
+    index_path = DOCS_DIR / "index.html"
+
+    dated_path.write_text(html, encoding="utf-8")
+    latest_path.write_text(html, encoding="utf-8")
+    index_path.write_text(html, encoding="utf-8")
+
+    print(f"[OK] wrote: {dated_path}")
+    print(f"[OK] wrote: {latest_path}")
+    print(f"[OK] wrote: {index_path}")
+
 
 if __name__ == "__main__":
     main()
