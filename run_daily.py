@@ -263,72 +263,128 @@ def _fig_heatmap(pivot: pd.DataFrame, out_png: Path, title: str, fmt: str, cente
 # -----------------------------
 # Strategy A/B rules (B안: 규칙 재현)
 # -----------------------------
-def _strategy_rules(df: pd.DataFrame) -> dict:
+def _sign_score(x: float, eps: float = 1e-6) -> int:
+    if pd.isna(x):
+        return 0
+    if x > eps:
+        return 1
+    if x < -eps:
+        return -1
+    return 0
+
+def _bucket_range_5(score: float) -> str:
+    lo = int(np.floor(score / 5) * 5)
+    return f"{lo}~{lo+5}"
+
+def _to_opinion(score: float) -> str:
+    if score >= 1.0:
+        return "매수"
+    if score <= -1.0:
+        return "매도"
+    return "중립"
+
+def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
     """
-    스크린샷의 'A안(40/60)' / 'B안(3D 추세)' 같은 느낌을 내기 위한 규칙 기반 추천 생성.
-    데이터에 존재하는:
-    - fear_greed_1y_rescaled (0~100)
-    - fg_bucket_1y (Extreme Fear ... Extreme Greed)
-    - index_close 기반 3D/5D 수익률
-    를 이용해 A/B를 산출한다.
+    사용자 정의 A/B 룰 구현
+    - score: fear_greed_1y_rescaled (없으면 fear_greed)
+    - 3D/5D: index_close pct_change(3/5)
     """
-    last = df.iloc[-1].copy()
+    last = df.iloc[-1]
 
-    fg = float(last["fear_greed_1y_rescaled"]) if _safe_col(df, "fear_greed_1y_rescaled") else float(last["fear_greed"])
-    bucket = str(last["fg_bucket_1y"]) if _safe_col(df, "fg_bucket_1y") else "NA"
+    score = float(last["fear_greed_1y_rescaled"]) if _safe_col(df, "fear_greed_1y_rescaled") else float(last["fear_greed"])
+    idx = df["index_close"] if _safe_col(df, "index_close") else pd.Series([np.nan] * len(df))
 
-    # 3D/5D ret
-    ret3 = float(df["index_close"].pct_change(3).iloc[-1]) if _safe_col(df, "index_close") else np.nan
-    ret5 = float(df["index_close"].pct_change(5).iloc[-1]) if _safe_col(df, "index_close") else np.nan
+    ret3 = float(idx.pct_change(3).iloc[-1]) if len(idx) > 3 else np.nan
+    ret5 = float(idx.pct_change(5).iloc[-1]) if len(idx) > 5 else np.nan
 
-    # A: FG 레벨 기반(보수적)
-    # - Extreme Fear/Fear: 적극(매수)
-    # - Neutral: 중립
-    # - Greed/Extreme Greed: 보수(부분 축소)
-    if bucket in ["Extreme Fear", "Fear"]:
-        a_action = "확대"
-        a_text = "A안(레벨): 공포 구간 → 분할매수/비중확대"
-    elif bucket == "Neutral":
-        a_action = "중립"
-        a_text = "A안(레벨): 중립 구간 → 유지/분할 접근"
+    # --- A안: 40/60 + 기존추세룰(5D 우선, 보합일때만 3D 반영)
+    if score < 40:
+        base_A = -1
+    elif score <= 60:
+        base_A = 0
     else:
-        a_action = "축소"
-        a_text = "A안(레벨): 탐욕 구간 → 분할익절/리스크 축소"
+        base_A = 1
 
-    # B: 단기 추세 기반(공격적)
-    # - 3D↑ & 5D↑: 추세추종(확대)
-    # - 3D↓ & 5D↓: 방어(축소)
-    # - 그 외: 중립
-    if (not pd.isna(ret3)) and (not pd.isna(ret5)) and ret3 > 0 and ret5 > 0:
-        b_action = "확대"
-        b_text = "B안(추세): 3D/5D 동반 상승 → 추세추종(비중확대)"
-    elif (not pd.isna(ret3)) and (not pd.isna(ret5)) and ret3 < 0 and ret5 < 0:
-        b_action = "축소"
-        b_text = "B안(추세): 3D/5D 동반 하락 → 방어(비중축소)"
+    # 5D 우선
+    adj_A = 0.0
+    if not pd.isna(ret5) and abs(ret5) > eps_flat:
+        adj_A = 1.0 if ret5 > 0 else -1.0
+        trend_reason_A = "5D 우선"
     else:
-        b_action = "중립"
-        b_text = "B안(추세): 혼조 → 중립/대기"
+        # 5D 보합일 때만 3D 반영(±0.5)
+        if not pd.isna(ret3) and abs(ret3) > eps_flat:
+            adj_A = 0.5 if ret3 > 0 else -0.5
+            trend_reason_A = "5D 보합 → 3D 반영"
+        else:
+            adj_A = 0.0
+            trend_reason_A = "5D/3D 보합"
 
-    # 3단계 최종 의견: A와 B를 합성
-    score = 0
-    score += {"확대": 1, "중립": 0, "축소": -1}.get(a_action, 0)
-    score += {"확대": 1, "중립": 0, "축소": -1}.get(b_action, 0)
-    if score >= 1:
-        final = "매수 우위"
-    elif score <= -1:
-        final = "방어 우위"
+    score_A = base_A + adj_A
+
+    # --- B안: 45/55 + 5D(+1/-1) + 3D*0.25(완충)
+    if score < 45:
+        base_B = -1
+    elif score <= 55:
+        base_B = 0
     else:
-        final = "중립"
+        base_B = 1
+
+    adj_B = 0.0
+    # 5D 신호
+    s5 = _sign_score(ret5, eps_flat)
+    adj_B += float(s5)  # +1/-1/0
+
+    # 3D 완충 0.25
+    s3 = _sign_score(ret3, eps_flat)
+    adj_B += 0.25 * float(s3)
+
+    score_B = base_B + adj_B
 
     return {
-        "fg": fg,
-        "bucket": bucket,
+        "score": score,
+        "bucket_range": _bucket_range_5(score),
         "ret3": ret3,
         "ret5": ret5,
-        "A": {"action": a_action, "text": a_text},
-        "B": {"action": b_action, "text": b_text},
-        "final": final,
+        "A": {
+            "base": base_A,
+            "adj": adj_A,
+            "score": score_A,
+            "opinion": _to_opinion(score_A),
+            "note": f"A안: base(40/60)={base_A}, adj={adj_A:+.2f} ({trend_reason_A})",
+        },
+        "B": {
+            "base": base_B,
+            "adj": adj_B,
+            "score": score_B,
+            "opinion": _to_opinion(score_B),
+            "note": f"B안: base(45/55)={base_B}, adj=5D({s5:+d})+3D({s3:+d})*0.25 → {adj_B:+.2f}",
+        },
     }
+
+def _today_bucket_winrate(df: pd.DataFrame) -> dict:
+    """
+    오늘 버킷에 들어갔을 때, 과거 동일 버킷에서
+    20D/60D forward가 +였는지(승률) 계산
+    """
+    if not _safe_col(df, "fg_bucket_1y"):
+        return {}
+
+    bucket_today = str(df["fg_bucket_1y"].iloc[-1])
+
+    out = {"bucket_today": bucket_today}
+
+    for horizon, col in [(20, "fwd_ret_20d_1y"), (60, "fwd_ret_60d_1y")]:
+        if not _safe_col(df, col):
+            continue
+        sub = df[df["fg_bucket_1y"].astype(str) == bucket_today].dropna(subset=[col])
+        if len(sub) == 0:
+            continue
+        win = float((sub[col] > 0).mean())
+        out[f"winrate_{horizon}d"] = win
+        out[f"count_{horizon}d"] = int(len(sub))
+        out[f"mean_{horizon}d"] = float(sub[col].mean())
+        out[f"median_{horizon}d"] = float(sub[col].median())
+    return out
 
 
 # -----------------------------
