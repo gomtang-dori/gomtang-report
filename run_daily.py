@@ -18,7 +18,6 @@ Outputs (docs/):
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from datetime import datetime
 
@@ -106,8 +105,8 @@ def _bucket_order(x: str) -> int:
 
 def _trend_bin(value: float) -> str:
     """
-    2축 히트맵의 X축(추세) bin을 만든다.
-    스크린샷의 '3D/5D' 느낌을 내기 위해 (최근변화) 기준으로 5개 구간으로 쪼갬.
+    2축 히트맵의 X축(추세) bin
+    - 5D 수익률 기준 5구간
     """
     if pd.isna(value):
         return "NA"
@@ -161,7 +160,6 @@ def _fig_components_grid(df: pd.DataFrame, out_png: Path) -> None:
         return
 
     last = df.tail(200).copy()
-    n = len(have)
     rows = 4
     cols = 2
     fig, axes = plt.subplots(rows, cols, figsize=(12, 10), sharex=True)
@@ -185,9 +183,9 @@ def _fig_components_grid(df: pd.DataFrame, out_png: Path) -> None:
 def _make_heatmap_tables(df: pd.DataFrame):
     """
     히트맵 2개:
-    - 히트맵1: 평균(20D) 수익률
-    - 히트맵2: 승률(20D)
-    2축: Y=fg_bucket_1y, X=trend_bin(최근 5D 수익률 기반)
+    - 평균(20D) 수익률
+    - 승률(20D)
+    2축: Y=fg_bucket_1y, X=trend_bin(5D 수익률)
     """
     req = ["fg_bucket_1y", "fwd_ret_20d_1y", "index_close"]
     if not all(_safe_col(df, c) for c in req):
@@ -239,7 +237,7 @@ def _fig_heatmap(pivot: pd.DataFrame, out_png: Path, title: str, fmt: str, cente
         cmap=cmap,
         center=center,
         linewidths=0.6,
-        linecolor="#FFFFFF",
+        linecolor="#FFFFFF",  # rgba 문자열 금지(에러 방지)
         cbar=True,
         ax=ax,
     )
@@ -261,7 +259,7 @@ def _fig_heatmap(pivot: pd.DataFrame, out_png: Path, title: str, fmt: str, cente
 
 
 # -----------------------------
-# Strategy A/B rules (B안: 규칙 재현)
+# Strategy A/B rules (사용자 정의 룰)
 # -----------------------------
 def _sign_score(x: float, eps: float = 1e-6) -> int:
     if pd.isna(x):
@@ -272,9 +270,11 @@ def _sign_score(x: float, eps: float = 1e-6) -> int:
         return -1
     return 0
 
+
 def _bucket_range_5(score: float) -> str:
     lo = int(np.floor(score / 5) * 5)
     return f"{lo}~{lo+5}"
+
 
 def _to_opinion(score: float) -> str:
     if score >= 1.0:
@@ -283,11 +283,20 @@ def _to_opinion(score: float) -> str:
         return "매도"
     return "중립"
 
+
 def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
     """
     사용자 정의 A/B 룰 구현
     - score: fear_greed_1y_rescaled (없으면 fear_greed)
     - 3D/5D: index_close pct_change(3/5)
+
+    A안:
+      - base: 40/60
+      - adj: 5D 우선(+1/-1), 5D 보합 시 3D만(±0.5)
+
+    B안:
+      - base: 45/55
+      - adj: 5D(+1/-1) + 3D * 0.25
     """
     last = df.iloc[-1]
 
@@ -297,7 +306,7 @@ def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
     ret3 = float(idx.pct_change(3).iloc[-1]) if len(idx) > 3 else np.nan
     ret5 = float(idx.pct_change(5).iloc[-1]) if len(idx) > 5 else np.nan
 
-    # --- A안: 40/60 + 기존추세룰(5D 우선, 보합일때만 3D 반영)
+    # --- A안
     if score < 40:
         base_A = -1
     elif score <= 60:
@@ -305,13 +314,11 @@ def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
     else:
         base_A = 1
 
-    # 5D 우선
     adj_A = 0.0
     if not pd.isna(ret5) and abs(ret5) > eps_flat:
         adj_A = 1.0 if ret5 > 0 else -1.0
         trend_reason_A = "5D 우선"
     else:
-        # 5D 보합일 때만 3D 반영(±0.5)
         if not pd.isna(ret3) and abs(ret3) > eps_flat:
             adj_A = 0.5 if ret3 > 0 else -0.5
             trend_reason_A = "5D 보합 → 3D 반영"
@@ -321,7 +328,7 @@ def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
 
     score_A = base_A + adj_A
 
-    # --- B안: 45/55 + 5D(+1/-1) + 3D*0.25(완충)
+    # --- B안
     if score < 45:
         base_B = -1
     elif score <= 55:
@@ -330,11 +337,9 @@ def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
         base_B = 1
 
     adj_B = 0.0
-    # 5D 신호
     s5 = _sign_score(ret5, eps_flat)
-    adj_B += float(s5)  # +1/-1/0
+    adj_B += float(s5)
 
-    # 3D 완충 0.25
     s3 = _sign_score(ret3, eps_flat)
     adj_B += 0.25 * float(s3)
 
@@ -361,30 +366,34 @@ def _compute_strategy_AB(df: pd.DataFrame, eps_flat: float = 0.002) -> dict:
         },
     }
 
-def _today_bucket_winrate(df: pd.DataFrame) -> dict:
+
+def _strategy_payload_for_html(df: pd.DataFrame) -> dict:
     """
-    오늘 버킷에 들어갔을 때, 과거 동일 버킷에서
-    20D/60D forward가 +였는지(승률) 계산
+    HTML 표시용으로 A/B를 'action/text/final' 형태로 변환
     """
-    if not _safe_col(df, "fg_bucket_1y"):
-        return {}
+    ab = _compute_strategy_AB(df)
 
-    bucket_today = str(df["fg_bucket_1y"].iloc[-1])
+    # 최종 의견: 보수적으로 "둘 다 매수면 매수, 둘 다 매도면 매도, 그 외 중립"
+    a_op = ab["A"]["opinion"]
+    b_op = ab["B"]["opinion"]
+    if a_op == "매수" and b_op == "매수":
+        final = "매수"
+    elif a_op == "매도" and b_op == "매도":
+        final = "매도"
+    else:
+        final = "중립"
 
-    out = {"bucket_today": bucket_today}
-
-    for horizon, col in [(20, "fwd_ret_20d_1y"), (60, "fwd_ret_60d_1y")]:
-        if not _safe_col(df, col):
-            continue
-        sub = df[df["fg_bucket_1y"].astype(str) == bucket_today].dropna(subset=[col])
-        if len(sub) == 0:
-            continue
-        win = float((sub[col] > 0).mean())
-        out[f"winrate_{horizon}d"] = win
-        out[f"count_{horizon}d"] = int(len(sub))
-        out[f"mean_{horizon}d"] = float(sub[col].mean())
-        out[f"median_{horizon}d"] = float(sub[col].median())
-    return out
+    return {
+        "A": {
+            "action": a_op,
+            "text": f"{ab['A']['note']} / 점수={ab['A']['score']:+.2f}",
+        },
+        "B": {
+            "action": b_op,
+            "text": f"{ab['B']['note']} / 점수={ab['B']['score']:+.2f}",
+        },
+        "final": final,
+    }
 
 
 # -----------------------------
@@ -403,7 +412,6 @@ def _update_report_index(new_dated_file: str, asof: str) -> dict:
         except Exception:
             items = []
 
-    # 중복 제거 후 맨 앞에 추가
     items = [x for x in items if x.get("file") != new_dated_file]
     items.insert(0, {"file": new_dated_file, "asof": asof})
     items = items[:10]
@@ -420,8 +428,7 @@ def _update_report_index(new_dated_file: str, asof: str) -> dict:
 # -----------------------------
 # HTML builder (Genspark-like)
 # -----------------------------
-def _build_html(asof: str, kpi: dict, strategy: dict, img: dict, fwd_table_html: str, report_index_payload: dict) -> str:
-    # KPI cards
+def _build_html(asof: str, kpi: dict, strategy: dict, img: dict, fwd_table_html: str) -> str:
     kpi_html = f"""
     <div class="kpi-grid">
       <div class="kpi-card">
@@ -454,8 +461,6 @@ def _build_html(asof: str, kpi: dict, strategy: dict, img: dict, fwd_table_html:
     </div>
     """
 
-    # Toolbar + dropdown from report_index.json
-    # (Genspark 느낌: 우측 상단 드롭다운 + 최신 버튼)
     html = f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -471,8 +476,6 @@ def _build_html(asof: str, kpi: dict, strategy: dict, img: dict, fwd_table_html:
       --text: #e8eefc;
       --muted: rgba(232,238,252,0.72);
       --accent: #66a6ff;
-      --good: #4dd4ac;
-      --warn: #ffcc66;
     }}
     body {{
       margin:0; background: var(--bg); color: var(--text);
@@ -692,7 +695,6 @@ def main():
     fg_val = float(df["fear_greed_1y_rescaled"].iloc[-1]) if _safe_col(df, "fear_greed_1y_rescaled") else float(df["fear_greed"].iloc[-1])
     bucket_name = str(df["fg_bucket_1y"].iloc[-1]) if _safe_col(df, "fg_bucket_1y") else "NA"
 
-    # bucket_range(예: 55~60) 느낌: 5단위로 내림/올림
     lo = int(np.floor(fg_val / 5) * 5)
     hi = int(lo + 5)
     bucket_range = f"{lo}~{hi}"
@@ -710,8 +712,8 @@ def main():
         "ret5": ret5,
     }
 
-    # 투자전략(A/B 룰 B안)
-    strategy = _strategy_rules(df)
+    # ✅ 투자전략(A/B 룰) — _strategy_rules 호출 제거 (0개)
+    strategy = _strategy_payload_for_html(df)
 
     # Charts
     fg_line_png = ASSETS_DIR / "fg_line.png"
@@ -740,7 +742,7 @@ def main():
     dated_file = f"곰탕지수_1Y리스케일_{asof}_embedded.html"
     latest_file = "곰탕지수_1Y리스케일_latest_embedded.html"
 
-    payload = _update_report_index(dated_file, asof)
+    _update_report_index(dated_file, asof)
 
     html = _build_html(
         asof=asof,
@@ -748,7 +750,6 @@ def main():
         strategy=strategy,
         img=img,
         fwd_table_html=fwd_table_html,
-        report_index_payload=payload,
     )
 
     (DOCS_DIR / dated_file).write_text(html, encoding="utf-8")
