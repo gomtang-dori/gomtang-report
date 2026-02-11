@@ -1,0 +1,29 @@
+{
+  "start": "2025-02-21",
+  "end": "2026-02-10",
+  "rows": 238,
+  "components_used": [
+    "momentum",
+    "strength",
+    "breadth",
+    "putcall",
+    "volatility",
+    "safe_haven",
+    "junk_bond",
+    "margin_loan_ratio"
+  ],
+  "p05_raw": 39.21937450141869,
+  "p95_raw": 77.7242942279105,
+  "rescaled_mean": 55.18073294948402,
+  "rescaled_median": 56.127028483293415,
+  "rescaled_min": 0.0,
+  "rescaled_max": 100.0,
+  "bucket_counts": {
+    "Extreme Greed": 78,
+    "Greed": 45,
+    "Fear": 44,
+    "Extreme Fear": 43,
+    "Neutral": 28
+  },
+  "index_ret": 1.2185724028188223
+}
