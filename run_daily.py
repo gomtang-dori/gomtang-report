@@ -25,6 +25,10 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+import matplotlib as mpl
+mpl.rcParams["font.family"] = "Noto Sans CJK KR"
+mpl.rcParams["axes.unicode_minus"] = False
+
 import matplotlib
 matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
