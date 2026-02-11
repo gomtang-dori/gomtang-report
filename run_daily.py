@@ -235,7 +235,7 @@ def _fig_heatmap(pivot: pd.DataFrame, out_png: Path, title: str, fmt: str, cente
         cmap=cmap,
         center=center,
         linewidths=0.6,
-        linecolor="rgba(255,255,255,0.10)",
+        linecolor="#FFFFFF",
         cbar=True,
         ax=ax,
     )
