@@ -3,76 +3,225 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>곰탕지수 (1Y 리스케일) — Daily Report</title>
+  <title>곰탕지수 리포트</title>
   <style>
     :root {
-      --bg: #0b1220;
-      --card: #111b2e;
+      --bg: #0b1020;
+      --panel: #0f1a30;
+      --card: #111f3a;
+      --line: rgba(255,255,255,0.10);
       --text: #e8eefc;
-      --muted: #a9b6d3;
-      --line: rgba(255,255,255,0.12);
-      --accent: #6ea8fe;
+      --muted: rgba(232,238,252,0.72);
+      --accent: #66a6ff;
+      --good: #4dd4ac;
+      --warn: #ffcc66;
     }
     body {
-      margin: 0; padding: 0;
-      background: var(--bg);
-      color: var(--text);
+      margin:0; background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", Arial, sans-serif;
     }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 18px; }
-    .title {
-      padding: 14px 16px;
+    .topbar {
+      display:flex; justify-content:space-between; align-items:center;
+      padding: 10px 14px; border-bottom: 1px solid var(--line);
+      background: rgba(15,26,48,0.85);
+      position: sticky; top: 0; backdrop-filter: blur(10px); z-index: 10;
+    }
+    .brand { font-weight: 700; font-size: 14px; color: var(--text); opacity:0.95; }
+    .toolbar { display:flex; gap:8px; align-items:center; }
+    select, button {
+      background: #0e1a33; color: var(--text);
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(110,168,254,0.20), rgba(17,27,46,0.2));
-      border-radius: 14px;
-      margin-bottom: 14px;
+      border-radius: 10px; padding: 8px 10px; font-size: 12px;
     }
-    h1 { margin: 0; font-size: 22px; }
-    .meta { margin-top: 6px; color: var(--muted); font-size: 13px; }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 14px;
-    }
-    @media (min-width: 900px) {
-      .grid { grid-template-columns: 1fr 1fr; }
-    }
-    .card {
+    button { cursor:pointer; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 14px; }
+    .hero {
+      background: radial-gradient(1200px 400px at 30% 0%, rgba(102,166,255,0.20), transparent 60%),
+                  radial-gradient(900px 300px at 80% 30%, rgba(77,212,172,0.15), transparent 65%);
       border: 1px solid var(--line);
-      background: var(--card);
+      border-radius: 16px;
+      padding: 16px;
+      margin-top: 10px;
+    }
+    .title-row { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+    h1 { margin:0; font-size: 22px; }
+    .badge {
+      display:inline-block; padding: 4px 10px; border-radius: 999px;
+      border: 1px solid var(--line); background: rgba(255,255,255,0.04);
+      font-size: 12px; color: var(--text);
+    }
+
+    .kpi-grid {
+      margin-top: 14px;
+      display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    }
+    @media (max-width: 980px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 520px) {
+      .kpi-grid { grid-template-columns: 1fr; }
+    }
+    .kpi-card {
+      background: rgba(17,31,58,0.85);
+      border: 1px solid var(--line);
       border-radius: 14px;
       padding: 12px;
-      overflow: hidden;
+      min-height: 84px;
     }
-    .card h3 { margin: 0 0 10px 0; font-size: 16px; color: #dbe6ff; }
-    img { width: 100%; height: auto; border-radius: 10px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td {
-      border-bottom: 1px solid var(--line);
-      padding: 8px 10px;
-      font-size: 13px;
+    .kpi-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .kpi-value { font-size: 20px; font-weight: 800; }
+    .kpi-sub { margin-top: 6px; font-size: 12px; color: var(--muted); }
+    .kpi-pills { display:flex; flex-wrap:wrap; gap:6px; }
+    .pill {
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04);
     }
-    th { color: #dbe6ff; text-align: left; background: rgba(255,255,255,0.03); }
-    .kv td:first-child { width: 42%; color: var(--muted); }
-    a { color: var(--accent); text-decoration: none; }
-    .footer { color: var(--muted); font-size: 12px; margin-top: 14px; }
+
+    .section {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(15,26,48,0.55);
+      padding: 12px;
+    }
+    .section h2 { margin: 0 0 10px 0; font-size: 15px; }
+    .grid2 { display:grid; grid-template-columns: 1.1fr 0.9fr; gap: 12px; }
+    @media (max-width: 980px) { .grid2 { grid-template-columns: 1fr; } }
+
+    .card {
+      border: 1px solid var(--line);
+      background: rgba(17,31,58,0.75);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .card h3 { margin: 0 0 10px 0; font-size: 14px; color: rgba(232,238,252,0.95); }
+
+    img { width: 100%; height: auto; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); }
+
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid rgba(255,255,255,0.10); padding: 7px 9px; font-size: 12px; }
+    th { text-align:left; color: rgba(232,238,252,0.92); background: rgba(255,255,255,0.03); }
+
+    .muted { color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .ab-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 980px) { .ab-grid { grid-template-columns: 1fr; } }
+    .ab-box {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.03);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .ab-title { font-weight: 800; margin-bottom: 8px; }
+    .ab-final {
+      margin-top: 8px;
+      display:inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(102,166,255,0.15);
+      border: 1px solid rgba(102,166,255,0.35);
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="title">
-      <h1>곰탕지수 (1Y 리스케일) — Daily Report</h1>
-      <div class="meta">기준일: <b>2026-02-10</b> · 생성시각(UTC): 2026-02-11 15:38:55</div>
+  <div class="topbar">
+    <div class="brand">곰탕지수 리포트</div>
+    <div class="toolbar">
+      <select id="dateSelect" title="날짜 선택(최근 10개)"></select>
+      <button onclick="window.location.href='report_index.json'">날짜폴더(보기)</button>
+      <button onclick="window.location.href='index.html'">최신</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="hero">
+      <div class="title-row">
+        <h1>한국곰탕지수(1Y 리스케일) 일일 리포트</h1>
+        <span class="badge">2026-02-10</span>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        * GitHub Actions가 레포 <code>data/</code>를 읽어서 매일 자동 생성합니다. (UTC 생성시각: 2026-02-11 15:59:13)
+      </div>
+
+      
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">곰탕 지수값(1Y)</div>
+        <div class="kpi-value">56.18</div>
+        <div class="kpi-sub">0~100</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">구간(정체)</div>
+        <div class="kpi-value">55~60</div>
+        <div class="kpi-sub">Greed</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">추세(+5p)</div>
+        <div class="kpi-pills">
+          <span class="pill">3D: 3.15%</span>
+          <span class="pill">5D: 0.16%</span>
+        </div>
+        <div class="kpi-sub">* index_close 기반</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">KOSPI200</div>
+        <div class="kpi-pills">
+          <span class="pill">종가: 780.76</span>
+          <span class="pill">3D: 3.15%</span>
+          <span class="pill">5D: 0.16%</span>
+        </div>
+        <div class="kpi-sub">단기 변화율</div>
+      </div>
+    </div>
+    
     </div>
 
-    <div class="grid">
-      
-        <div class="card">
-          <h3>요약</h3>
-          <table class="kv"><tr><td>start</td><td>2025-02-21</td></tr><tr><td>end</td><td>2026-02-10</td></tr><tr><td>rows</td><td>238</td></tr><tr><td>components_used</td><td>['momentum', 'strength', 'breadth', 'putcall', 'volatility', 'safe_haven', 'junk_bond', 'margin_loan_ratio']</td></tr><tr><td>p05_raw</td><td>39.21937450141869</td></tr><tr><td>p95_raw</td><td>77.7242942279105</td></tr><tr><td>rescaled_mean</td><td>55.18073294948402</td></tr><tr><td>rescaled_median</td><td>56.127028483293415</td></tr><tr><td>rescaled_min</td><td>0.0</td></tr><tr><td>rescaled_max</td><td>100.0</td></tr><tr><td>bucket_counts</td><td>{'Extreme Greed': 78, 'Greed': 45, 'Fear': 44, 'Extreme Fear': 43, 'Neutral': 28}</td></tr><tr><td>index_ret</td><td>1.2185724028188223</td></tr></table>
+    <div class="section">
+      <h2>1) 3단계 투자전략(A/B 동시 표기)</h2>
+      <div class="ab-grid">
+        <div class="ab-box">
+          <div class="ab-title">A안(레벨) · 축소</div>
+          <div class="muted">A안(레벨): 탐욕 구간 → 분할익절/리스크 축소</div>
         </div>
-        
+        <div class="ab-box">
+          <div class="ab-title">B안(추세) · 확대</div>
+          <div class="muted">B안(추세): 3D/5D 동반 상승 → 추세추종(비중확대)</div>
+        </div>
+      </div>
+      <div class="ab-final">최종 의견: <b>중립</b></div>
+    </div>
+
+    <div class="section">
+      <h2>2) 곰탕지수 라인차트</h2>
       <div class="card">
+        <img src="assets/fg_line.png" alt="FG line" />
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>3) 구성요소(컴포넌트) 라인차트</h2>
+      <div class="card">
+        <img src="assets/components_grid.png" alt="components" />
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>4) 히트맵(최신 셀 위치 표시)</h2>
+      <div class="grid2">
+        <div class="card">
+          <h3>히트맵 1 — 평균 수익(20D)</h3>
+          <img src="assets/heat_mean_20d.png" alt="heat mean" />
+        </div>
+        <div class="card">
+          <h3>히트맵 2 — 승률(20D)</h3>
+          <img src="assets/heat_win_20d.png" alt="heat win" />
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
         <h3>Forward 요약표</h3>
         <table border="1" class="dataframe">
   <thead>
@@ -247,26 +396,25 @@
 </table>
       </div>
     </div>
-
-    <div class="grid" style="margin-top:14px;">
-      <div class="card"><h3>라인차트</h3><img src="assets/fg_line.png" alt="라인차트" /></div>
-      <div class="card"><h3>컴포넌트 라인차트</h3><img src="assets/components_line.png" alt="컴포넌트 라인차트" /></div>
-    </div>
-
-    <div class="grid" style="margin-top:14px;">
-      <div class="card"><h3>히트맵(Forward 평균/승률)</h3><img src="assets/forward_heatmap.png" alt="히트맵(Forward 평균/승률)" /></div>
-      <div class="card">
-        <h3>설명</h3>
-        <p style="color:var(--muted); line-height:1.6; margin:0;">
-          이 페이지는 GitHub Actions에서 레포 내부 데이터(<code>data/</code>)를 읽어 매일 자동 생성됩니다.
-          GitHub Pages 루트 주소는 항상 <code>docs/index.html</code>(최신 리포트 복사본)을 보여줍니다.
-        </p>
-      </div>
-    </div>
-
-    <div class="footer">
-      <div>Repo: <a href="https://github.com/gomtang-dori/gomtang-report" target="_blank">gomtang-dori/gomtang-report</a></div>
-    </div>
   </div>
+
+<script>
+async function initDates() {
+  const res = await fetch('report_index.json?ts=' + Date.now());
+  const data = await res.json();
+  const sel = document.getElementById('dateSelect');
+  sel.innerHTML = '';
+  (data.items || []).forEach((it, idx) => {
+    const opt = document.createElement('option');
+    opt.value = it.file;
+    opt.textContent = it.asof + (idx===0 ? ' (최신)' : '');
+    sel.appendChild(opt);
+  });
+  sel.onchange = () => {
+    window.location.href = sel.value;
+  };
+}
+initDates();
+</script>
 </body>
 </html>
